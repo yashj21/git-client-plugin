@@ -1,5 +1,6 @@
 package org.jenkinsci.plugins.gitclient;
 
+import com.google.common.collect.Lists;
 import hudson.EnvVars;
 import hudson.FilePath;
 import hudson.model.TaskListener;
@@ -17,6 +18,7 @@ import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.io.UnsupportedEncodingException;
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Paths;
@@ -34,24 +36,33 @@ import java.util.Set;
 import java.util.UUID;
 
 import org.apache.commons.io.FileUtils;
-
 import org.apache.commons.lang.SystemUtils;
+
 import org.eclipse.jgit.api.errors.JGitInternalException;
+import org.eclipse.jgit.internal.storage.file.FileRepository;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.PersonIdent;
+import org.eclipse.jgit.lib.StoredConfig;
 import org.eclipse.jgit.transport.RefSpec;
 import org.eclipse.jgit.transport.URIish;
 import org.eclipse.jgit.lib.Constants;
 
+import static org.hamcrest.io.FileMatchers.*;
+import static org.hamcrest.MatcherAssert.*;
 import static org.hamcrest.Matchers.*;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.fail;
 import org.junit.AfterClass;
-import static org.junit.Assert.*;
 import static org.junit.Assume.*;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.ExpectedException;
 import org.junit.rules.TemporaryFolder;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -96,15 +107,12 @@ public class GitClientTest {
 
     /* Capabilities of command line git in current environment */
     private final boolean CLI_GIT_HAS_GIT_LFS;
+    private final boolean CLI_GIT_HAS_GIT_LFS_CONFIGURED;
     private final boolean CLI_GIT_REPORTS_DETACHED_SHA1;
-    private final boolean CLI_GIT_SUPPORTS_SUBMODULES;
     private final boolean CLI_GIT_SUPPORTS_SUBMODULE_DEINIT;
     private final boolean CLI_GIT_SUPPORTS_SUBMODULE_RENAME;
     private final boolean CLI_GIT_SUPPORTS_SYMREF;
     private final boolean CLI_GIT_SUPPORTS_REV_LIST_NO_WALK;
-
-    @Rule
-    public ExpectedException thrown = ExpectedException.none();
 
     @Rule
     public TemporaryFolder tempFolder = new TemporaryFolder();
@@ -121,7 +129,6 @@ public class GitClientTest {
             cliGitClient = (CliGitAPIImpl) Git.with(TaskListener.NULL, new EnvVars()).in(srcRepoDir).using("git").getClient();
         }
         CLI_GIT_REPORTS_DETACHED_SHA1 = cliGitClient.isAtLeastVersion(1, 8, 0, 0);
-        CLI_GIT_SUPPORTS_SUBMODULES = cliGitClient.isAtLeastVersion(1, 8, 0, 0);
         CLI_GIT_SUPPORTS_SUBMODULE_DEINIT = cliGitClient.isAtLeastVersion(1, 9, 0, 0);
         CLI_GIT_SUPPORTS_SUBMODULE_RENAME = cliGitClient.isAtLeastVersion(1, 9, 0, 0);
         CLI_GIT_SUPPORTS_SYMREF = cliGitClient.isAtLeastVersion(2, 8, 0, 0);
@@ -137,6 +144,16 @@ public class GitClientTest {
             gitLFSExists = false;
         }
         CLI_GIT_HAS_GIT_LFS = gitLFSExists;
+
+        boolean gitLFSConfigured;
+        try {
+            // If git-lfs is configured then the smudge filter will not be empty
+            gitLFSConfigured = cliGitClient.launchCommand("config", "filter.lfs.smudge").contains("git-lfs");
+        } catch (GitException exception) {
+            // This is expected when git-lfs is not installed.
+            gitLFSConfigured = false;
+        }
+        CLI_GIT_HAS_GIT_LFS_CONFIGURED = gitLFSConfigured;
     }
 
     @Parameterized.Parameters(name = "{0}")
@@ -366,8 +383,10 @@ public class GitClientTest {
         final ObjectId commitA = commitOneFile();
         ChangelogCommand changelog = gitClient.changelog();
         changelog.includes(commitA);
-        thrown.expect(IllegalStateException.class);
-        changelog.execute();
+        assertThrows(IllegalStateException.class,
+                     () -> {
+                         changelog.execute();
+                     });
     }
 
     @Test
@@ -375,8 +394,10 @@ public class GitClientTest {
         final ObjectId commitA = commitOneFile();
         ChangelogCommand changelog = gitClient.changelog();
         changelog.excludes(commitA);
-        thrown.expect(IllegalStateException.class);
-        changelog.execute();
+        assertThrows(IllegalStateException.class,
+                     () -> {
+                         changelog.execute();
+                     });
     }
 
     @Test
@@ -511,8 +532,10 @@ public class GitClientTest {
         File badDir = new File(badDirName);
         GitClient badGitClient = Git.with(TaskListener.NULL, new EnvVars()).in(badDir).using(gitImplName).getClient();
         Class expectedExceptionClass = gitImplName.equals("git") ? GitException.class : InvalidPathException.class;
-        thrown.expect(expectedExceptionClass);
-        badGitClient.init_().bare(random.nextBoolean()).workspace(badDirName).execute();
+        assertThrows(expectedExceptionClass,
+                     () -> {
+                         badGitClient.init_().bare(random.nextBoolean()).workspace(badDirName).execute();
+                     });
     }
 
     @Test
@@ -523,8 +546,10 @@ public class GitClientTest {
         File badDir = new File(badDirName);
         GitClient badGitClient = Git.with(TaskListener.NULL, new EnvVars()).in(badDir).using(gitImplName).getClient();
         Class expectedExceptionClass = gitImplName.equals("git") ? GitException.class : JGitInternalException.class;
-        thrown.expect(expectedExceptionClass);
-        badGitClient.init_().bare(random.nextBoolean()).workspace(badDirName).execute();
+        assertThrows(expectedExceptionClass,
+                     () -> {
+                         badGitClient.init_().bare(random.nextBoolean()).workspace(badDirName).execute();
+                     });
     }
 
     @Test
@@ -582,6 +607,204 @@ public class GitClientTest {
         assertFalse(gitClient.isCommitInRepo(upstreamCommit));
     }
 
+    private void assertExceptionMessageContains(GitException ge, String expectedSubstring) {
+        String actual = ge.getMessage().toLowerCase();
+        assertTrue("Expected '" + expectedSubstring + "' exception message, but was: " + actual, actual.contains(expectedSubstring));
+    }
+
+    private IGitAPI IGitAPIForTrueBareRepositoryTests() throws IOException, InterruptedException {
+        // provides iGitAPI with bare repository initialization
+        File repoRootTemp = tempFolder.newFolder();
+        GitClient gitClientTemp = Git.with(TaskListener.NULL,new EnvVars()).in(repoRootTemp).using(gitImplName).getClient();
+        gitClientTemp.init_().workspace(repoRootTemp.getAbsolutePath()).bare(true).execute();
+        return (IGitAPI) gitClientTemp;
+    }
+
+    @Test
+    @Deprecated
+    public void testIsBareRepositoryBareDot() throws InterruptedException, IOException {
+        IGitAPI gitAPI = IGitAPIForTrueBareRepositoryTests();
+        assertTrue(". is not a bare repository", gitAPI.isBareRepository("."));
+    }
+
+    @Test
+    @Deprecated
+    public void testIsBareRepositoryWorkingDotGit() throws IOException, InterruptedException {
+        gitClient.init_().workspace(repoRoot.getAbsolutePath()).bare(true).execute();
+        IGitAPI gitAPI = (IGitAPI) gitClient;
+        FilePath gitClientFilePath = gitClient.getWorkTree();
+        gitClientFilePath.createTextTempFile("aPre", ".txt", "file contents");
+        gitClient.add(".");
+        gitClient.commit("Not-a-bare-repository-dot-git");
+        assertFalse(".git is a bare repository", gitAPI.isBareRepository(".git"));
+    }
+
+    @Test
+    @Deprecated
+    public void testIsBareRepositoryBareDotGit() throws IOException, InterruptedException {
+        IGitAPI gitAPI = IGitAPIForTrueBareRepositoryTests();
+        /* Bare repository does not have a .git directory.  This is
+         * another no-such-location test but is included here for
+         * consistency.
+         */
+        try {
+            /* JGit knows that w.igit() has a workspace, and asks the workspace
+             * if it is bare.  That seems more correct than relying on testing
+             * a specific file that the repository is bare.  JGit behaves better
+             * than CliGit in this case.
+             */
+            assertTrue("non-existent .git is in a bare repository", gitAPI.isBareRepository(".git"));
+            /* JGit will not throw an exception - it knows the repo is bare */
+            /* CliGit throws an exception so should not reach the next assertion */
+            assertFalse("CliGitAPIImpl did not throw expected exception", gitAPI instanceof CliGitAPIImpl);
+        } catch (GitException ge) {
+            /* Only enters this path for CliGit */
+            assertExceptionMessageContains(ge, "not a git repository");
+        }
+    }
+
+    @Test
+    @Deprecated
+    public void testIsBareRepositoryWorkingNoSuchLocation() throws IOException, InterruptedException {
+        gitClient.init_().workspace(repoRoot.getAbsolutePath()).bare(true).execute();
+        IGitAPI gitAPI = (IGitAPI) gitClient;
+        FilePath gitClientFilePath = gitClient.getWorkTree();
+        gitClientFilePath.createTextTempFile("aPre", ".txt", "file contents");
+        gitClient.add(".");
+        gitClient.commit("Not-a-bare-repository-working-no-such-location");
+        try {
+            assertFalse("non-existent location is in a bare repository", gitAPI.isBareRepository("no-such-location"));
+            /* JGit will not throw an exception - it knows the repo is not bare */
+            /* CliGit throws an exception so should not reach the next assertion */
+            assertFalse("CliGitAPIImpl did not throw expected exception", gitAPI instanceof CliGitAPIImpl);
+        } catch (GitException ge) {
+            /* Only enters this path for CliGit */
+            assertExceptionMessageContains(ge, "not a git repository");
+        }
+    }
+
+    @Test
+    @Deprecated
+    public void testIsBareRepositoryBareNoSuchLocation() throws IOException, InterruptedException {
+        IGitAPI gitAPI = IGitAPIForTrueBareRepositoryTests();
+        try {
+            assertTrue("non-existent location is in a bare repository", gitAPI.isBareRepository("no-such-location"));
+            /* JGit will not throw an exception - it knows the repo is not bare */
+            /* CliGit throws an exception so should not reach the next assertion */
+            assertFalse("CliGitAPIImpl did not throw expected exception", gitAPI instanceof CliGitAPIImpl);
+        } catch (GitException ge) {
+            /* Only enters this path for CliGit */
+            assertExceptionMessageContains(ge, "not a git repository");
+        }
+    }
+
+    @Deprecated
+    @Test
+    public void testIsBareRepositoryBareEmptyString() throws IOException, InterruptedException {
+        IGitAPI gitAPI = IGitAPIForTrueBareRepositoryTests();
+        assertTrue("empty string is not a bare repository", gitAPI.isBareRepository(""));
+    }
+
+    @Deprecated
+    @Test
+    public void testIsBareRepositoryWorkingEmptyString() throws IOException, InterruptedException {
+        gitClient.init_().workspace(repoRoot.getAbsolutePath()).bare(true).execute();
+        IGitAPI gitAPI = (IGitAPI) gitClient;
+        FilePath gitClientFilePath = gitClient.getWorkTree();
+        gitClientFilePath.createTextTempFile("aPre", ".txt", "file contents");
+        gitClient.add(".");
+        gitClient.commit("Not-a-bare-repository-empty-string");
+        assertFalse("empty string is a bare repository", gitAPI.isBareRepository(""));
+    }
+
+    @Deprecated
+    @Test
+    public void testIsBareRepositoryBareNoArg() throws IOException, InterruptedException {
+        IGitAPI gitAPI = IGitAPIForTrueBareRepositoryTests();
+        assertTrue("no arg is not a bare repository", gitAPI.isBareRepository());
+    }
+
+    @Deprecated
+    @Test
+    public void testIsBareRepositoryWorkingNoArg() throws IOException, InterruptedException {
+        gitClient.init_().workspace(repoRoot.getAbsolutePath()).bare(true).execute();
+        IGitAPI gitAPI = (IGitAPI) gitClient;
+        FilePath gitClientFilePath = gitClient.getWorkTree();
+        gitClientFilePath.createTextTempFile("aPre", ".txt", "file contents");
+        gitClient.add(".");
+        gitClient.commit("Not-a-bare-repository-no-arg");
+        assertFalse("no arg is a bare repository", gitAPI.isBareRepository());
+    }
+
+    @Test
+    public void testBareRepoInit() throws IOException, InterruptedException {
+        IGitAPI gitAPI = IGitAPIForTrueBareRepositoryTests();
+        File tempDir = gitAPI.withRepository((repo, channel) -> repo.getWorkTree());
+        File gitFile = new File(tempDir,".git");
+        File gitObjFile = new File(tempDir,".git/objects");
+        File objFile = new File(tempDir,"objects");
+        assertFalse(".git exists unexpectedly", gitFile.exists());
+        assertFalse(".git/objects exists unexpectedly", gitObjFile.exists());
+        assertTrue("objects is not a directory", objFile.isDirectory());
+    }
+
+    /* The most critical use cases of isBareRepository respond the
+     * same for both the JGit implementation and the CliGit
+     * implementation.  Those are asserted first in this section of
+     * assertions.
+     */
+
+    @Deprecated
+    @Test
+    public void testIsBareRepositoryWorkingRepoPathDotGit() throws IOException, InterruptedException {
+        gitClient.init_().workspace(repoRoot.getAbsolutePath()).bare(true).execute();
+        IGitAPI gitAPI = (IGitAPI) gitClient;
+        FilePath gitClientFilePath = gitClient.getWorkTree();
+        gitClientFilePath.createTextTempFile("aPre", ".txt", "file contents");
+        gitClient.add(".");
+        gitClient.commit("Not-a-bare-repository-false-repoPath-dot-git");
+        assertFalse("repoPath/.git is a bare repository", gitAPI.isBareRepository(repoRoot.getPath() + File.separator + ".git"));
+    }
+
+    @Deprecated
+    @Test
+    public void testIsBareRepositoryWorkingNull() throws IOException, InterruptedException {
+        gitClient.init_().workspace(repoRoot.getAbsolutePath()).bare(true).execute();
+        IGitAPI gitAPI = (IGitAPI) gitClient;
+        FilePath gitClientFilePath = gitClient.getWorkTree();
+        gitClientFilePath.createTextTempFile("aPre", ".txt", "file contents");
+        gitClient.add(".");
+        gitClient.commit("Not-a-bare-repository-working-null");
+        try {
+            assertFalse("null is a bare repository", gitAPI.isBareRepository(null));
+            fail("Did not throw expected exception");
+        } catch (GitException ge) {
+            assertExceptionMessageContains(ge, "not a git repository");
+        }
+    }
+
+    @Deprecated
+    @Test
+    public void testIsBareRepositoryBareNull() throws IOException, InterruptedException {
+        IGitAPI gitAPI = IGitAPIForTrueBareRepositoryTests();
+        try {
+            assertTrue("null is not a bare repository", gitAPI.isBareRepository(null));
+            fail("Did not throw expected exception");
+        } catch (GitException ge) {
+            assertExceptionMessageContains(ge, "not a git repository");
+        }
+    }
+
+    @Deprecated
+    @Test
+    public void test_isBareRepository_bare_repoPath() throws IOException, InterruptedException {
+        IGitAPI gitAPI = IGitAPIForTrueBareRepositoryTests();
+        File tempRepoDir = gitAPI.withRepository((repo, channel) -> repo.getWorkTree());
+        File dotFile = new File(tempRepoDir,".");
+        assertTrue("repoPath is not a bare repository", gitAPI.isBareRepository(tempRepoDir.getPath()));
+        assertTrue("abs(.) is not a bare repository",gitAPI.isBareRepository(dotFile.getAbsolutePath()));
+    }
+
     @Test
     public void testGetRemoteUrl() throws Exception {
         assertEquals(srcRepoDir.getAbsolutePath(), gitClient.getRemoteUrl("origin"));
@@ -601,24 +824,94 @@ public class GitClientTest {
         assertEquals(upstreamRepoURL, gitClient.getRemoteUrl("upstream"));
     }
 
+    @Test
+    public void testAutocreateFailsOnMultipleMatchingOrigins() throws Exception {
+        File repoRootTemp = tempFolder.newFolder();
+        GitClient gitClientTemp = Git.with(TaskListener.NULL, new EnvVars()).in(repoRootTemp).using(gitImplName).getClient();
+        gitClientTemp.init();
+        FilePath gitClientFilePath = gitClientTemp.getWorkTree();
+        FilePath gitClientTempFile = gitClientFilePath.createTextTempFile("aPre", ".txt", "file contents");
+        gitClientTemp.add(".");
+        gitClientTemp.commit("Added " + gitClientTempFile.toURI().toString());
+        gitClient.clone_().url("file://" + repoRootTemp.getPath()).execute();
+        final URIish remote = new URIish(Constants.DEFAULT_REMOTE_NAME);
+
+        try ( // add second remote
+              FileRepository repo = new FileRepository(new File(repoRoot, ".git"))) {
+            StoredConfig config = repo.getConfig();
+            config.setString("remote", "upstream", "url", "file://" + repoRootTemp.getPath());
+            config.setString("remote", "upstream", "fetch", "+refs/heads/*:refs/remotes/upstream/*");
+            config.save();
+        }
+
+        // fill both remote branches
+        List<RefSpec> refspecs = Collections.singletonList(new RefSpec(
+                "refs/heads/*:refs/remotes/origin/*"));
+        gitClient.fetch_().from(remote, refspecs).execute();
+        refspecs = Collections.singletonList(new RefSpec(
+                "refs/heads/*:refs/remotes/upstream/*"));
+        gitClient.fetch_().from(remote, refspecs).execute();
+
+        // checkout will fail
+        try {
+            gitClient.checkout().ref(Constants.MASTER).execute();
+        } catch (GitException e) {
+            // expected
+            Set<String> refNames = gitClient.getRefNames("refs/heads/");
+            assertFalse("RefNames will not contain master", refNames.contains("refs/heads/master"));
+        }
+
+    }
+
+    /**
+     * Test case for auto local branch creation behviour.
+     * This is essentially a stripped down version of {@link GitAPITestCase#test_branchContainingRemote()}
+     * @throws Exception on exceptions occur
+     */
+    @Test
+    public void testCheckoutRemoteAutocreatesLocal() throws Exception {
+        File repoRootTemp = tempFolder.newFolder();
+        GitClient gitClientTemp = Git.with(TaskListener.NULL, new EnvVars()).in(repoRootTemp).using(gitImplName).getClient();
+        gitClientTemp.init();
+        FilePath gitClientFilePath = gitClientTemp.getWorkTree();
+        FilePath gitClientTempFile = gitClientFilePath.createTextTempFile("aPre", ".txt", "file contents");
+        gitClientTemp.add(".");
+        gitClientTemp.commit("Added " + gitClientTempFile.toURI().toString());
+        gitClient.clone_().url("file://" + repoRootTemp.getPath()).execute();
+        final URIish remote = new URIish(Constants.DEFAULT_REMOTE_NAME);
+        final List<RefSpec> refspecs = Collections.singletonList(new RefSpec(
+                "refs/heads/*:refs/remotes/origin/*"));
+        gitClient.fetch_().from(remote, refspecs).execute();
+        gitClient.checkout().ref(Constants.MASTER).execute();
+
+        Set<String> refNames = gitClient.getRefNames("refs/heads/");
+        assertThat(refNames, contains("refs/heads/master"));
+    }
+
     private void assertFileInWorkingDir(GitClient client, String fileName) {
         File fileInRepo = new File(repoRoot, fileName);
-        assertTrue(fileInRepo.getAbsolutePath() + " not found", fileInRepo.isFile());
+        assertThat(fileInRepo, is(anExistingFile()));
     }
 
     private void assertFileNotInWorkingDir(GitClient client, String fileName) {
         File fileInRepo = new File(repoRoot, fileName);
-        assertFalse(fileInRepo.getAbsolutePath() + " found", fileInRepo.isFile());
+        assertThat(fileInRepo, is(not(anExistingFile())));
+    }
+
+    private void assertFileContent(String fileName, String expectedContent) throws IOException {
+        File file = new File(repoRoot, fileName);
+        String actualContent = FileUtils.readFileToString(file, StandardCharsets.UTF_8).trim();
+        assertEquals("Incorrect file content in " + fileName, expectedContent, actualContent);
     }
 
     private void assertDirInWorkingDir(GitClient client, String dirName) {
         File dirInRepo = new File(repoRoot, dirName);
-        assertTrue(dirInRepo.getAbsolutePath() + " found", dirInRepo.isDirectory());
+        assertThat(dirInRepo, is(anExistingDirectory()));
     }
 
     private void assertDirNotInWorkingDir(GitClient client, String dirName) {
         File dirInRepo = new File(repoRoot, dirName);
-        assertFalse(dirInRepo.getAbsolutePath() + " found", dirInRepo.isDirectory());
+        assertThat(dirInRepo, is(not(anExistingDirectory())));
     }
 
     private boolean removeMatchingBranches(Set<Branch> filtered, Set<Branch> toRemove) {
@@ -817,8 +1110,10 @@ public class GitClientTest {
         String remote = fetchUpstream(branch);
         gitClient.checkoutBranch(branch, remote + "/" + branch);
         /* Check that exception is thrown trying to create an existing branch */
-        thrown.expect(GitException.class);
-        gitClient.branch("master");
+        assertThrows(GitException.class,
+                     () -> {
+                         gitClient.branch("master");
+                     });
     }
 
     @Test
@@ -828,11 +1123,16 @@ public class GitClientTest {
         String branch = "master";
         String remote = fetchUpstream(branch);
         gitClient.checkoutBranch(branch, remote + "/" + branch);
-        /* Check that exception is thrown trying to commit nothing */
         if (gitImplName.equals("git")) {
-            thrown.expect(GitException.class);
+            /* Check that exception is thrown trying to commit nothing */
+            assertThrows(GitException.class,
+                         () -> {
+                             gitClient.commit("This commit contains no changes");
+                         });
+        } else {
+            /* Check that JGit does not throw an exception trying to commit nothing */
+            gitClient.commit("This commit contains no changes");
         }
-        gitClient.commit("This commit contains no changes");
     }
 
     @Test
@@ -842,11 +1142,16 @@ public class GitClientTest {
         String branch = "master";
         String remote = fetchUpstream(branch);
         gitClient.checkoutBranch(branch, remote + "/" + branch);
-        /* Check that exception is thrown trying to delete non-existent branch */
         if (gitImplName.equals("git")) {
-            thrown.expect(GitException.class);
+            /* Check that exception is thrown trying to delete non-existent branch */
+            assertThrows(GitException.class,
+                         () -> {
+                             gitClient.deleteBranch("ThisBranchDoesNotExist");
+                         });
+        } else {
+            /* Check that JGit does not throw an exception trying to delete non-existent branch */
+            gitClient.deleteBranch("ThisBranchDoesNotExist");
         }
-        gitClient.deleteBranch("ThisBranchDoesNotExist");
     }
 
     @Issue("JENKINS-35687") // Git LFS support
@@ -857,10 +1162,290 @@ public class GitClientTest {
         String branch = "tests/largeFileSupport";
         String remote = fetchLFSTestRepo(branch);
         gitClient.checkout().branch(branch).ref(remote + "/" + branch).lfsRemote(remote).execute();
-        File uuidFile = new File(repoRoot, "uuid.txt");
-        String fileContent = FileUtils.readFileToString(uuidFile, "utf-8").trim();
-        String expectedContent = "5e7733d8acc94636850cb466aec524e4";
-        assertEquals("Incorrect LFS file contents in " + uuidFile, expectedContent, fileContent);
+
+        assertFileContent("uuid.txt", "5e7733d8acc94636850cb466aec524e4");
+    }
+
+    @Issue("JENKINS-43427") // Git LFS sparse checkout support
+    @Test
+    public void testSparseCheckoutWithCliGitLFS() throws Exception {
+        assumeThat(gitImplName, is("git"));
+        assumeTrue(CLI_GIT_HAS_GIT_LFS);
+
+        String branch = "tests/largeFileSupport";
+
+        String file1 = "uuid.txt";
+        String file2 = "uuid2.txt";
+        String file3 = "uuid,3.txt";
+        String file4 = "uuid 4.txt";
+
+        String lfsObjectFile1 = ".git/lfs/objects/75/d1/75d122e4160dc91480257ff72403e77ef276e24d7416ed2be56d4e726482d86e";
+        String lfsObjectFile2 = ".git/lfs/objects/7f/0b/7f0bbf4cdb2bdf3e862c5f00285d362db0b46465ed089775743ce1ebe6c912ce";
+        String lfsObjectFile3 = ".git/lfs/objects/1e/35/1e359899b05181e6a118865d47ed027b9930bc870dffbd9608c609ec3b2a3d16";
+        String lfsObjectFile4 = ".git/lfs/objects/44/a0/44a0d97ff32b5ba6a28ea8a35d1ebbfd8f9a8a2db316e87abd530b4b60153b5c";
+
+        String expectedContent1 = "5e7733d8acc94636850cb466aec524e4";
+        String expectedContent2 = "c49d89a61c3411e9a5555b2af3892239";
+        String expectedContent3 = "6fd3199a1cb111e9bbaf537fc996ab9b";
+        String expectedContent4 = "803219bc1cb111e9abbfb7cc7b029948";
+
+        // it should support sparse checkout of LFS files
+        {
+            setGitClient();
+            String remote = fetchLFSTestRepo(branch);
+            assertEmptyWorkingDir(gitClient);
+
+            List<String> sparsePaths = Lists.newArrayList("uuid.txt");
+            gitClient.checkout().ref(remote + "/" + branch).lfsRemote(remote).sparseCheckoutPaths(sparsePaths).execute();
+
+            assertFileContent(file1, expectedContent1);
+            assertFileNotInWorkingDir(gitClient, file2);
+            assertFileNotInWorkingDir(gitClient, file3);
+            assertFileNotInWorkingDir(gitClient, file4);
+
+            assertFileInWorkingDir(gitClient, lfsObjectFile1);
+            assertFileNotInWorkingDir(gitClient, lfsObjectFile2);
+            assertFileNotInWorkingDir(gitClient, lfsObjectFile3);
+            assertFileNotInWorkingDir(gitClient, lfsObjectFile4);
+        }
+
+        // it should support multiple sparse checkout paths
+        {
+            setGitClient();
+            String remote = fetchLFSTestRepo(branch);
+            assertEmptyWorkingDir(gitClient);
+
+            List<String> sparsePaths = Lists.newArrayList("uuid.txt", "uuid2.txt");
+            gitClient.checkout().ref(remote + "/" + branch).lfsRemote(remote).sparseCheckoutPaths(sparsePaths).execute();
+
+            assertFileContent(file1, expectedContent1);
+            assertFileContent(file2, expectedContent2);
+            assertFileNotInWorkingDir(gitClient, file3);
+            assertFileNotInWorkingDir(gitClient, file4);
+
+            assertFileInWorkingDir(gitClient, lfsObjectFile1);
+            assertFileInWorkingDir(gitClient, lfsObjectFile2);
+            assertFileNotInWorkingDir(gitClient, lfsObjectFile3);
+            assertFileNotInWorkingDir(gitClient, lfsObjectFile4);
+        }
+
+        // it should support commas (",") in sparse checkout paths
+        // (due to https://github.com/git-lfs/git-lfs/issues/2264 no sparse checkout can be used here)
+        {
+            setGitClient();
+            String remote = fetchLFSTestRepo(branch);
+            assertEmptyWorkingDir(gitClient);
+
+            List<String> sparsePaths = Lists.newArrayList("uuid,3.txt");
+            gitClient.checkout().ref(remote + "/" + branch).lfsRemote(remote).sparseCheckoutPaths(sparsePaths).execute();
+
+            assertFileContent(file1, expectedContent1); // file present due to workaround
+            assertFileContent(file2, expectedContent2); // file present due to workaround
+            assertFileContent(file3, expectedContent3);
+            assertFileContent(file4, expectedContent4); // file present due to workaround
+
+            assertFileInWorkingDir(gitClient, lfsObjectFile1); // file present due to workaround
+            assertFileInWorkingDir(gitClient, lfsObjectFile2); // file present due to workaround
+            assertFileInWorkingDir(gitClient, lfsObjectFile3);
+            assertFileInWorkingDir(gitClient, lfsObjectFile4); // file present due to workaround
+        }
+
+        // it should support spaces (" ") in sparse checkout paths
+        {
+            setGitClient();
+            String remote = fetchLFSTestRepo(branch);
+            assertEmptyWorkingDir(gitClient);
+
+            List<String> sparsePaths = Lists.newArrayList("uuid 4.txt");
+            gitClient.checkout().ref(remote + "/" + branch).lfsRemote(remote).sparseCheckoutPaths(sparsePaths).execute();
+
+            assertFileNotInWorkingDir(gitClient, file1);
+            assertFileNotInWorkingDir(gitClient, file2);
+            assertFileNotInWorkingDir(gitClient, file3);
+            assertFileContent(file4, expectedContent4);
+
+            assertFileNotInWorkingDir(gitClient, lfsObjectFile1);
+            assertFileNotInWorkingDir(gitClient, lfsObjectFile2);
+            assertFileNotInWorkingDir(gitClient, lfsObjectFile3);
+            assertFileInWorkingDir(gitClient, lfsObjectFile4);
+        }
+
+        // it should support pattern matching with "?" in sparse checkout paths
+        {
+            setGitClient();
+            String remote = fetchLFSTestRepo(branch);
+            assertEmptyWorkingDir(gitClient);
+
+            List<String> sparsePaths = Lists.newArrayList("uuid.t?t");
+            gitClient.checkout().ref(remote + "/" + branch).lfsRemote(remote).sparseCheckoutPaths(sparsePaths).execute();
+
+            assertFileContent(file1, expectedContent1);
+            assertFileNotInWorkingDir(gitClient, file2);
+            assertFileNotInWorkingDir(gitClient, file3);
+            assertFileNotInWorkingDir(gitClient, file4);
+
+            assertFileInWorkingDir(gitClient, lfsObjectFile1);
+            assertFileNotInWorkingDir(gitClient, lfsObjectFile2);
+            assertFileNotInWorkingDir(gitClient, lfsObjectFile3);
+            assertFileNotInWorkingDir(gitClient, lfsObjectFile4);
+        }
+
+        // it should support pattern matching with "*" in sparse checkout paths
+        {
+            setGitClient();
+            String remote = fetchLFSTestRepo(branch);
+            assertEmptyWorkingDir(gitClient);
+
+            List<String> sparsePaths = Lists.newArrayList("uuid.*");
+            gitClient.checkout().ref(remote + "/" + branch).lfsRemote(remote).sparseCheckoutPaths(sparsePaths).execute();
+
+            assertFileContent(file1, expectedContent1);
+            assertFileNotInWorkingDir(gitClient, file2);
+            assertFileNotInWorkingDir(gitClient, file3);
+            assertFileNotInWorkingDir(gitClient, file4);
+
+            assertFileInWorkingDir(gitClient, lfsObjectFile1);
+            assertFileNotInWorkingDir(gitClient, lfsObjectFile2);
+            assertFileNotInWorkingDir(gitClient, lfsObjectFile3);
+            assertFileNotInWorkingDir(gitClient, lfsObjectFile4);
+        }
+
+        // it should support pattern matching with "**" in sparse checkout paths
+        {
+            setGitClient();
+            String remote = fetchLFSTestRepo(branch);
+            assertEmptyWorkingDir(gitClient);
+
+            List<String> sparsePaths = Lists.newArrayList("/**/uuid.txt");
+            gitClient.checkout().ref(remote + "/" + branch).lfsRemote(remote).sparseCheckoutPaths(sparsePaths).execute();
+
+            assertFileContent(file1, expectedContent1);
+            assertFileNotInWorkingDir(gitClient, file2);
+            assertFileNotInWorkingDir(gitClient, file3);
+            assertFileNotInWorkingDir(gitClient, file4);
+
+            assertFileInWorkingDir(gitClient, lfsObjectFile1);
+            assertFileNotInWorkingDir(gitClient, lfsObjectFile2);
+            assertFileNotInWorkingDir(gitClient, lfsObjectFile3);
+            assertFileNotInWorkingDir(gitClient, lfsObjectFile4);
+        }
+
+        // it should support negate pattern (leading "!") in sparse checkout paths
+        {
+            setGitClient();
+            String remote = fetchLFSTestRepo(branch);
+            assertEmptyWorkingDir(gitClient);
+
+            List<String> sparsePaths = Lists.newArrayList("/*", "!uuid.txt");
+            gitClient.checkout().ref(remote + "/" + branch).lfsRemote(remote).sparseCheckoutPaths(sparsePaths).execute();
+
+            assertFileNotInWorkingDir(gitClient, file1);
+            assertFileContent(file2, expectedContent2);
+            assertFileContent(file3, expectedContent3);
+            assertFileContent(file4, expectedContent4);
+
+            assertFileNotInWorkingDir(gitClient, lfsObjectFile1);
+            assertFileInWorkingDir(gitClient, lfsObjectFile2);
+            assertFileInWorkingDir(gitClient, lfsObjectFile3);
+            assertFileInWorkingDir(gitClient, lfsObjectFile4);
+        }
+
+        // it should remove former checked out file when changing sparse checkout paths
+        {
+            setGitClient();
+            String remote = fetchLFSTestRepo(branch);
+            assertEmptyWorkingDir(gitClient);
+
+            List<String> sparsePaths1 = Lists.newArrayList("uuid.txt");
+            gitClient.checkout().ref(remote + "/" + branch).lfsRemote(remote).sparseCheckoutPaths(sparsePaths1).execute();
+
+            assertFileContent(file1, expectedContent1);
+            assertFileNotInWorkingDir(gitClient, file2);
+            assertFileNotInWorkingDir(gitClient, file3);
+            assertFileNotInWorkingDir(gitClient, file4);
+
+            assertFileInWorkingDir(gitClient, lfsObjectFile1);
+            assertFileNotInWorkingDir(gitClient, lfsObjectFile2);
+            assertFileNotInWorkingDir(gitClient, lfsObjectFile3);
+            assertFileNotInWorkingDir(gitClient, lfsObjectFile4);
+
+            List<String> sparsePaths2 = Lists.newArrayList("uuid2.txt");
+            gitClient.checkout().ref(remote + "/" + branch).lfsRemote(remote).sparseCheckoutPaths(sparsePaths2).execute();
+
+            assertFileNotInWorkingDir(gitClient, file1);
+            assertFileContent(file2, expectedContent2);
+            assertFileNotInWorkingDir(gitClient, file3);
+            assertFileNotInWorkingDir(gitClient, file4);
+
+            assertFileInWorkingDir(gitClient, lfsObjectFile1);
+            assertFileInWorkingDir(gitClient, lfsObjectFile2);
+            assertFileNotInWorkingDir(gitClient, lfsObjectFile3);
+            assertFileNotInWorkingDir(gitClient, lfsObjectFile4);
+        }
+
+        // it should support switching from non-sparse to sparse checkout
+        {
+            setGitClient();
+            String remote = fetchLFSTestRepo(branch);
+            assertEmptyWorkingDir(gitClient);
+
+            gitClient.checkout().ref(remote + "/" + branch).lfsRemote(remote).execute();
+
+            assertFileContent(file1, expectedContent1);
+            assertFileContent(file2, expectedContent2);
+            assertFileContent(file3, expectedContent3);
+            assertFileContent(file4, expectedContent4);
+
+            assertFileInWorkingDir(gitClient, lfsObjectFile1);
+            assertFileInWorkingDir(gitClient, lfsObjectFile2);
+            assertFileInWorkingDir(gitClient, lfsObjectFile3);
+            assertFileInWorkingDir(gitClient, lfsObjectFile4);
+
+            List<String> sparsePaths = Lists.newArrayList("uuid.txt");
+            gitClient.checkout().ref(remote + "/" + branch).lfsRemote(remote).sparseCheckoutPaths(sparsePaths).execute();
+
+            assertFileContent(file1, expectedContent1);
+            assertFileNotInWorkingDir(gitClient, file2);
+            assertFileNotInWorkingDir(gitClient, file3);
+            assertFileNotInWorkingDir(gitClient, file4);
+
+            assertFileInWorkingDir(gitClient, lfsObjectFile1);
+            assertFileInWorkingDir(gitClient, lfsObjectFile2);
+            assertFileInWorkingDir(gitClient, lfsObjectFile3);
+            assertFileInWorkingDir(gitClient, lfsObjectFile4);
+        }
+
+        // it should support switching from sparse to non-sparse checkout
+        {
+            setGitClient();
+            String remote = fetchLFSTestRepo(branch);
+            assertEmptyWorkingDir(gitClient);
+
+            List<String> sparsePaths = Lists.newArrayList("uuid.txt");
+            gitClient.checkout().ref(remote + "/" + branch).lfsRemote(remote).sparseCheckoutPaths(sparsePaths).execute();
+
+            assertFileContent(file1, expectedContent1);
+            assertFileNotInWorkingDir(gitClient, file2);
+            assertFileNotInWorkingDir(gitClient, file3);
+            assertFileNotInWorkingDir(gitClient, file4);
+
+            assertFileInWorkingDir(gitClient, lfsObjectFile1);
+            assertFileNotInWorkingDir(gitClient, lfsObjectFile2);
+            assertFileNotInWorkingDir(gitClient, lfsObjectFile3);
+            assertFileNotInWorkingDir(gitClient, lfsObjectFile4);
+
+            gitClient.checkout().ref(remote + "/" + branch).lfsRemote(remote).execute();
+
+            assertFileContent(file1, expectedContent1);
+            assertFileContent(file2, expectedContent2);
+            assertFileContent(file3, expectedContent3);
+            assertFileContent(file4, expectedContent4);
+
+            assertFileInWorkingDir(gitClient, lfsObjectFile1);
+            assertFileInWorkingDir(gitClient, lfsObjectFile2);
+            assertFileInWorkingDir(gitClient, lfsObjectFile3);
+            assertFileInWorkingDir(gitClient, lfsObjectFile4);
+        }
     }
 
     @Issue("JENKINS-35687") // Git LFS support - JGit not supported
@@ -895,11 +1480,12 @@ public class GitClientTest {
         gitClient.checkout().branch(branch).ref(remote + "/" + branch).execute();
     }
 
-    // If LFS installed and not enabled, checkout content without download
+    // If LFS not installed and not enabled, checkout content without download
     @Issue("JENKINS-35687") // Git LFS support
     @Test
     public void testCheckoutWithoutLFSWhenLFSNotAvailable() throws Exception {
         assumeFalse(CLI_GIT_HAS_GIT_LFS);
+        assumeFalse(CLI_GIT_HAS_GIT_LFS_CONFIGURED); // MinGit on Windows may have git lfs configured but not installed
         String branch = "tests/largeFileSupport";
         String remote = fetchLFSTestRepo(branch);
         gitClient.checkout().branch(branch).ref(remote + "/" + branch).execute();
@@ -1653,17 +2239,21 @@ public class GitClientTest {
     public void testFixSubmoduleUrlsInvalidRemote() throws Exception {
         assumeThat(gitImplName, is("git")); // CliGit
         IGitAPI gitAPI = (IGitAPI) gitClient;
-        thrown.expect(GitException.class);
-        thrown.expectMessage("Could not determine remote");
-        gitAPI.fixSubmoduleUrls("invalid-remote", TaskListener.NULL);
+        GitException e = assertThrows(GitException.class,
+                                      () -> {
+                                          gitAPI.fixSubmoduleUrls("invalid-remote", TaskListener.NULL);
+                                      });
+        assertThat(e.getMessage(), containsString("Could not determine remote"));
     }
 
     @Test
     public void testFixSubmoduleUrlsJGitUnsupported() throws Exception {
         assumeThat(gitImplName, not(is("git"))); // JGit does not support fixSubmoduleUrls
         IGitAPI gitAPI = (IGitAPI) gitClient;
-        thrown.expect(UnsupportedOperationException.class);
-        gitAPI.fixSubmoduleUrls("origin", TaskListener.NULL);
+        assertThrows(UnsupportedOperationException.class,
+                     () -> {
+                         gitAPI.fixSubmoduleUrls("origin", TaskListener.NULL);
+                     });
     }
 
     private void assertStatusUntrackedContent(GitClient client, boolean expectUntrackedContent) throws Exception {
